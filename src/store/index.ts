@@ -16,6 +16,11 @@ import type {
   HealthRecord,
   RiskAssessment,
   PageType,
+  DirectorTodo,
+  DetailedRegistrationStatus,
+  ReservedResource,
+  SuspensionSuggestion,
+  CourseType,
 } from '../types'
 
 interface AppState {
@@ -32,6 +37,7 @@ interface AppState {
   reinstatementApprovals: ReinstatementApproval[]
   waitlistItems: WaitlistItem[]
   users: User[]
+  directorTodos: DirectorTodo[]
   setCurrentUser: (user: User | null) => void
   setCurrentPage: (page: PageType) => void
   setCurrentElderId: (id: string | null) => void
@@ -42,8 +48,8 @@ interface AppState {
   updateHealthRecord: (elderId: string, record: HealthRecord) => void
   updateRiskAssessment: (elderId: string, assessment: RiskAssessment) => void
   registerCourse: (elderId: string, courseId: string) => { success: boolean; message: string }
-  confirmHealthCheck: (registrationId: string, socialWorkerId: string) => void
-  checkIn: (registrationId: string, scheduleId: string, date: string, status: 'present' | 'absent' | 'late' | 'exception', notes?: string) => { success: boolean; message: string }
+  confirmHealthCheck: (registrationId: string, socialWorkerId: string, extra?: { familyConfirmed?: boolean; volunteerAssigned?: boolean; volunteerId?: string; volunteerName?: string }) => void
+  checkIn: (registrationId: string, scheduleId: string, date: string, status: 'present' | 'absent' | 'late' | 'exception', notes?: string, suspensionSuggestion?: SuspensionSuggestion) => { success: boolean; message: string }
   approveReinstatement: (approvalId: string, reviewerId: string, comments: string) => void
   rejectReinstatement: (approvalId: string, reviewerId: string, comments: string) => void
   applyReinstatement: (elderId: string, courseId: string, registrationId: string, reason: string, applicantId: string) => void
@@ -62,6 +68,13 @@ interface AppState {
   getSuspendedElders: () => Elder[]
   getTodayExceptions: () => Attendance[]
   getCurrentElder: () => Elder | undefined
+  getDetailedRegistrationStatus: (registration: Registration, elder?: Elder, course?: Course) => DetailedRegistrationStatus
+  createDirectorTodo: (todo: Omit<DirectorTodo, 'id' | 'createdAt' | 'status'>) => void
+  updateDirectorTodo: (todoId: string, updates: Partial<DirectorTodo>) => void
+  getPendingDirectorTodos: () => DirectorTodo[]
+  validateRehabilitationRegistration: (elderId: string, courseId: string) => { valid: boolean; messages: string[] }
+  buildReservedResources: (courseId: string, scheduleId?: string) => ReservedResource
+  getRegistrationsWithDetailedStatus: (courseId?: string) => Array<{ registration: Registration; elder?: Elder; course?: Course; detailedStatus: DetailedRegistrationStatus }>
 }
 
 const mockElders: Elder[] = [
@@ -98,8 +111,13 @@ const mockElders: Elder[] = [
       highBloodPressure: true,
       diabetes: false,
       doctorRecommendation: '可以参加低强度运动，避免剧烈活动',
+      lastDoctorAdviceDate: '2025-05-10',
       canParticipateSports: true,
       requiresGuardian: false,
+      familyConfirmed: true,
+      familyConfirmedBy: '张小明',
+      familyConfirmedDate: '2025-05-10',
+      volunteerAssigned: false,
     },
   },
   {
@@ -136,8 +154,16 @@ const mockElders: Elder[] = [
       highBloodPressure: false,
       diabetes: true,
       doctorRecommendation: '建议参加温和运动，需要家属陪同',
+      lastDoctorAdviceDate: '2025-04-20',
       canParticipateSports: true,
       requiresGuardian: true,
+      familyConfirmed: true,
+      familyConfirmedBy: '李小红',
+      familyConfirmedDate: '2025-04-20',
+      volunteerAssigned: true,
+      volunteerId: 'v1',
+      volunteerName: '志愿者小王',
+      volunteerAssignmentDate: '2025-04-25',
     },
   },
   {
@@ -173,8 +199,11 @@ const mockElders: Elder[] = [
       highBloodPressure: true,
       diabetes: false,
       doctorRecommendation: '不建议参加运动类课程，可参加书法等静态课程',
+      lastDoctorAdviceDate: '2025-06-01',
       canParticipateSports: false,
       requiresGuardian: true,
+      familyConfirmed: false,
+      volunteerAssigned: false,
     },
   },
   {
@@ -210,8 +239,13 @@ const mockElders: Elder[] = [
       highBloodPressure: false,
       diabetes: false,
       doctorRecommendation: '可以参加各类课程',
+      lastDoctorAdviceDate: '2025-05-15',
       canParticipateSports: true,
       requiresGuardian: false,
+      familyConfirmed: true,
+      familyConfirmedBy: '赵小刚',
+      familyConfirmedDate: '2025-05-15',
+      volunteerAssigned: false,
     },
   },
   {
@@ -247,8 +281,13 @@ const mockElders: Elder[] = [
       highBloodPressure: false,
       diabetes: false,
       doctorRecommendation: '可以参加各类运动课程',
+      lastDoctorAdviceDate: '2025-05-20',
       canParticipateSports: true,
       requiresGuardian: false,
+      familyConfirmed: true,
+      familyConfirmedBy: '刘芳',
+      familyConfirmedDate: '2025-05-20',
+      volunteerAssigned: false,
     },
   },
 ]
@@ -290,6 +329,15 @@ const mockTeachers: Teacher[] = [
     specialty: ['健康讲座', '中医养生'],
     status: 'active',
   },
+  {
+    id: 't5',
+    name: '吴康复师',
+    gender: 'female',
+    age: 42,
+    phone: '13700137005',
+    specialty: ['康复训练', '物理治疗'],
+    status: 'active',
+  },
 ]
 
 const mockVenues: Venue[] = [
@@ -325,6 +373,14 @@ const mockVenues: Venue[] = [
     location: '一楼西侧',
     status: 'available',
   },
+  {
+    id: 'v5',
+    name: '康复训练室',
+    capacity: 8,
+    equipment: ['康复训练器械', '平衡垫', '牵引床', '理疗仪'],
+    location: '一楼东侧康复区',
+    status: 'available',
+  },
 ]
 
 const mockCourseLevels: CourseLevel[] = [
@@ -351,6 +407,14 @@ const mockCourseLevels: CourseLevel[] = [
     minAge: 55,
     maxAge: 75,
     requiredPhysicalCondition: '身体健康，能适应较大强度活动',
+  },
+  {
+    id: 'l4',
+    name: '康复级',
+    description: '适合需要康复训练的学员',
+    minAge: 55,
+    maxAge: 90,
+    requiredPhysicalCondition: '需有医生康复建议',
   },
 ]
 
@@ -443,6 +507,39 @@ const mockSchedules: CourseSchedule[] = [
     startDate: '2025-06-05',
     endDate: '2026-01-02',
   },
+  {
+    id: 's9',
+    courseId: 'c5',
+    dayOfWeek: 1,
+    startTime: '10:00',
+    endTime: '11:30',
+    teacherId: 't5',
+    venueId: 'v5',
+    startDate: '2025-06-02',
+    endDate: '2025-12-29',
+  },
+  {
+    id: 's10',
+    courseId: 'c5',
+    dayOfWeek: 3,
+    startTime: '10:00',
+    endTime: '11:30',
+    teacherId: 't5',
+    venueId: 'v5',
+    startDate: '2025-06-04',
+    endDate: '2025-12-31',
+  },
+  {
+    id: 's11',
+    courseId: 'c5',
+    dayOfWeek: 5,
+    startTime: '10:00',
+    endTime: '11:30',
+    teacherId: 't5',
+    venueId: 'v5',
+    startDate: '2025-06-06',
+    endDate: '2026-01-03',
+  },
 ]
 
 const mockCourses: Course[] = [
@@ -456,6 +553,8 @@ const mockCourses: Course[] = [
     currentParticipants: 15,
     waitlistCount: 3,
     requiresHealthCheck: false,
+    isRehabilitation: false,
+    absenceStrategy: 'suspend',
     schedules: mockSchedules.filter(s => s.courseId === 'c1'),
     status: 'published',
     createdBy: 'sw1',
@@ -471,6 +570,8 @@ const mockCourses: Course[] = [
     currentParticipants: 18,
     waitlistCount: 0,
     requiresHealthCheck: true,
+    isRehabilitation: false,
+    absenceStrategy: 'suspend',
     schedules: mockSchedules.filter(s => s.courseId === 'c2'),
     status: 'published',
     createdBy: 'sw1',
@@ -486,6 +587,8 @@ const mockCourses: Course[] = [
     currentParticipants: 10,
     waitlistCount: 5,
     requiresHealthCheck: true,
+    isRehabilitation: false,
+    absenceStrategy: 'suspend',
     schedules: mockSchedules.filter(s => s.courseId === 'c3'),
     status: 'published',
     createdBy: 'sw1',
@@ -501,10 +604,30 @@ const mockCourses: Course[] = [
     currentParticipants: 25,
     waitlistCount: 0,
     requiresHealthCheck: false,
+    isRehabilitation: false,
+    absenceStrategy: 'socialWorkerVisit',
     schedules: mockSchedules.filter(s => s.courseId === 'c4'),
     status: 'published',
     createdBy: 'sw1',
     createdAt: '2025-05-28',
+  },
+  {
+    id: 'c5',
+    name: '康复训练班（关节术后）',
+    type: 'rehabilitation',
+    description: '针对关节术后老人的专业康复训练，需有医生建议、家属确认和志愿者陪同。配备专业康复器械。',
+    levelId: 'l4',
+    maxParticipants: 8,
+    currentParticipants: 6,
+    waitlistCount: 4,
+    requiresHealthCheck: true,
+    isRehabilitation: true,
+    absenceStrategy: 'socialWorkerVisit',
+    requiredEquipmentIds: ['eq1', 'eq2', 'eq3'],
+    schedules: mockSchedules.filter(s => s.courseId === 'c5'),
+    status: 'published',
+    createdBy: 'sw1',
+    createdAt: '2025-06-01',
   },
 ]
 
@@ -518,6 +641,7 @@ const mockRegistrations: Registration[] = [
     healthConfirmationDate: '2025-05-25',
     confirmedBy: 'sw1',
     registrationDate: '2025-05-25',
+    reinstatementPending: false,
   },
   {
     id: 'r2',
@@ -529,6 +653,7 @@ const mockRegistrations: Registration[] = [
     confirmedBy: 'sw1',
     registrationDate: '2025-05-25',
     suspensionReason: '连续缺勤两次',
+    reinstatementPending: true,
   },
   {
     id: 'r3',
@@ -539,6 +664,7 @@ const mockRegistrations: Registration[] = [
     healthConfirmationDate: '2025-05-26',
     confirmedBy: 'sw1',
     registrationDate: '2025-05-26',
+    reinstatementPending: false,
   },
   {
     id: 'r4',
@@ -549,6 +675,7 @@ const mockRegistrations: Registration[] = [
     healthConfirmationDate: '2025-05-28',
     confirmedBy: 'sw1',
     registrationDate: '2025-05-28',
+    reinstatementPending: false,
   },
   {
     id: 'r5',
@@ -557,6 +684,7 @@ const mockRegistrations: Registration[] = [
     status: 'pending',
     healthConfirmed: false,
     registrationDate: '2025-06-10',
+    reinstatementPending: false,
   },
   {
     id: 'r6',
@@ -568,6 +696,7 @@ const mockRegistrations: Registration[] = [
     confirmedBy: 'sw1',
     waitlistPosition: 1,
     registrationDate: '2025-06-08',
+    reinstatementPending: false,
   },
   {
     id: 'r7',
@@ -578,6 +707,7 @@ const mockRegistrations: Registration[] = [
     healthConfirmationDate: '2025-05-30',
     confirmedBy: 'sw1',
     registrationDate: '2025-05-30',
+    reinstatementPending: false,
   },
   {
     id: 'r8',
@@ -587,6 +717,37 @@ const mockRegistrations: Registration[] = [
     healthConfirmed: false,
     waitlistPosition: 2,
     registrationDate: '2025-06-12',
+    reinstatementPending: false,
+  },
+  {
+    id: 'r9',
+    elderId: 'e3',
+    courseId: 'c5',
+    status: 'pending',
+    healthConfirmed: false,
+    registrationDate: '2025-06-14',
+    reinstatementPending: false,
+  },
+  {
+    id: 'r10',
+    elderId: 'e2',
+    courseId: 'c5',
+    status: 'confirmed',
+    healthConfirmed: true,
+    healthConfirmationDate: '2025-06-10',
+    confirmedBy: 'sw1',
+    registrationDate: '2025-06-05',
+    reinstatementPending: false,
+    reservedResources: {
+      equipmentIds: ['eq1', 'eq2'],
+      venueTimeSlot: {
+        venueId: 'v5',
+        scheduleId: 's9',
+        dayOfWeek: 1,
+        startTime: '10:00',
+        endTime: '11:30',
+      },
+    },
   },
 ]
 
@@ -607,6 +768,7 @@ const mockAttendances: Attendance[] = [
     isException: false,
     reportedToDirector: false,
     handled: false,
+    directorTodoCreated: false,
   },
   {
     id: 'a2',
@@ -619,6 +781,7 @@ const mockAttendances: Attendance[] = [
     isException: false,
     reportedToDirector: false,
     handled: false,
+    directorTodoCreated: false,
   },
   {
     id: 'a3',
@@ -632,6 +795,7 @@ const mockAttendances: Attendance[] = [
     isException: false,
     reportedToDirector: false,
     handled: false,
+    directorTodoCreated: false,
   },
   {
     id: 'a4',
@@ -645,6 +809,7 @@ const mockAttendances: Attendance[] = [
     isException: false,
     reportedToDirector: false,
     handled: false,
+    directorTodoCreated: false,
   },
   {
     id: 'a5',
@@ -658,6 +823,7 @@ const mockAttendances: Attendance[] = [
     reportedToDirector: true,
     notes: '连续两次缺勤，已触发暂停机制',
     handled: false,
+    directorTodoCreated: true,
   },
   {
     id: 'a6',
@@ -671,7 +837,13 @@ const mockAttendances: Attendance[] = [
     isException: true,
     reportedToDirector: true,
     notes: '迟到超过30分钟，签到异常',
+    suspensionSuggestion: {
+      suggested: true,
+      reason: '老人状态异常，建议临时停课观察',
+      severity: 'warning',
+    },
     handled: false,
+    directorTodoCreated: true,
   },
   {
     id: 'a7',
@@ -685,6 +857,7 @@ const mockAttendances: Attendance[] = [
     isException: false,
     reportedToDirector: false,
     handled: false,
+    directorTodoCreated: false,
   },
   {
     id: 'a8',
@@ -697,6 +870,7 @@ const mockAttendances: Attendance[] = [
     isException: false,
     reportedToDirector: false,
     handled: false,
+    directorTodoCreated: false,
   },
 ]
 
@@ -710,6 +884,11 @@ const mockReinstatementApprovals: ReinstatementApproval[] = [
     status: 'pending',
     applicantId: 'e2',
     applicationDate: yesterday,
+    preservedWaitlistPosition: 0,
+    preservedResources: {
+      equipmentIds: [],
+      venueTimeSlot: null,
+    },
   },
 ]
 
@@ -764,6 +943,46 @@ const mockWaitlistItems: WaitlistItem[] = [
     expiresAt: '2025-06-28',
     notified: false,
   },
+  {
+    id: 'w6',
+    registrationId: 'w-r12',
+    elderId: 'e6',
+    courseId: 'c5',
+    position: 1,
+    addedDate: '2025-06-14',
+    expiresAt: '2025-06-28',
+    notified: false,
+  },
+  {
+    id: 'w7',
+    registrationId: 'w-r13',
+    elderId: 'e7',
+    courseId: 'c5',
+    position: 2,
+    addedDate: '2025-06-14',
+    expiresAt: '2025-06-28',
+    notified: false,
+  },
+  {
+    id: 'w8',
+    registrationId: 'w-r14',
+    elderId: 'e8',
+    courseId: 'c5',
+    position: 3,
+    addedDate: '2025-06-15',
+    expiresAt: '2025-06-29',
+    notified: false,
+  },
+  {
+    id: 'w9',
+    registrationId: 'w-r15',
+    elderId: 'e5',
+    courseId: 'c5',
+    position: 4,
+    addedDate: '2025-06-15',
+    expiresAt: '2025-06-29',
+    notified: false,
+  },
 ]
 
 const mockUsers: User[] = [
@@ -778,6 +997,12 @@ const mockUsers: User[] = [
     name: '刘主任',
     role: 'director',
     phone: '13500135001',
+  },
+  {
+    id: 'v1',
+    name: '志愿者小王',
+    role: 'volunteer',
+    phone: '13400134001',
   },
 ]
 
@@ -804,8 +1029,13 @@ const extraElders: Elder[] = [
       highBloodPressure: false,
       diabetes: false,
       doctorRecommendation: '可以参加各类课程',
+      lastDoctorAdviceDate: '2025-05-25',
       canParticipateSports: true,
       requiresGuardian: false,
+      familyConfirmed: true,
+      familyConfirmedBy: '孙伟',
+      familyConfirmedDate: '2025-05-25',
+      volunteerAssigned: false,
     },
   },
   {
@@ -830,8 +1060,16 @@ const extraElders: Elder[] = [
       highBloodPressure: false,
       diabetes: false,
       doctorRecommendation: '可以参加各类课程',
+      lastDoctorAdviceDate: '2025-05-28',
       canParticipateSports: true,
       requiresGuardian: false,
+      familyConfirmed: true,
+      familyConfirmedBy: '周明',
+      familyConfirmedDate: '2025-05-28',
+      volunteerAssigned: true,
+      volunteerId: 'v1',
+      volunteerName: '志愿者小王',
+      volunteerAssignmentDate: '2025-06-01',
     },
   },
   {
@@ -856,9 +1094,47 @@ const extraElders: Elder[] = [
       highBloodPressure: false,
       diabetes: false,
       doctorRecommendation: '可以参加各类课程',
+      lastDoctorAdviceDate: '2025-06-01',
       canParticipateSports: true,
       requiresGuardian: false,
+      familyConfirmed: true,
+      familyConfirmedBy: '吴强',
+      familyConfirmedDate: '2025-06-01',
+      volunteerAssigned: false,
     },
+  },
+]
+
+const mockDirectorTodos: DirectorTodo[] = [
+  {
+    id: 'dt1',
+    type: 'abnormalStatus',
+    elderId: 'e3',
+    elderName: '王爷爷',
+    courseId: 'c1',
+    courseName: '书法基础班',
+    registrationId: 'r3',
+    title: '签到异常-迟到超过30分钟',
+    description: '王爷爷在书法基础班签到时迟到超过30分钟，签到异常，建议关注老人状态。',
+    attendanceId: 'a6',
+    status: 'pending',
+    priority: 'high',
+    createdAt: yesterday,
+  },
+  {
+    id: 'dt2',
+    type: 'absenceSuspend',
+    elderId: 'e2',
+    elderName: '李奶奶',
+    courseId: 'c1',
+    courseName: '书法基础班',
+    registrationId: 'r2',
+    title: '连续缺勤暂停-书法基础班',
+    description: '李奶奶连续两次缺勤书法基础班，已自动暂停上课资格，待申请复课。',
+    attendanceId: 'a5',
+    status: 'pending',
+    priority: 'medium',
+    createdAt: yesterday,
   },
 ]
 
@@ -878,6 +1154,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   reinstatementApprovals: mockReinstatementApprovals,
   waitlistItems: mockWaitlistItems,
   users: mockUsers,
+  directorTodos: mockDirectorTodos,
 
   setCurrentUser: (user) => set({ currentUser: user }),
   setCurrentPage: (page) => set({ currentPage: page }),
@@ -935,6 +1212,95 @@ export const useAppStore = create<AppState>((set, get) => ({
     }))
   },
 
+  getDetailedRegistrationStatus: (registration, elder, course) => {
+    if (registration.status === 'suspended' || (elder?.isSuspended)) {
+      if (registration.reinstatementPending) {
+        return 'reinstatementPending'
+      }
+      return 'suspendedByAbsence'
+    }
+    if (registration.status === 'waitlisted') {
+      return 'waitlistPendingPromotion'
+    }
+    if (registration.status === 'pending' || !registration.healthConfirmed || (course?.requiresHealthCheck && !registration.healthConfirmed)) {
+      return 'riskUnconfirmed'
+    }
+    return 'normalEnrolled'
+  },
+
+  validateRehabilitationRegistration: (elderId, courseId) => {
+    const state = get()
+    const elder = state.getElderById(elderId)
+    const course = state.getCourseById(courseId)
+    const messages: string[] = []
+
+    if (!elder || !course) {
+      return { valid: false, messages: ['老人或课程不存在'] }
+    }
+
+    if (!course.isRehabilitation) {
+      return { valid: true, messages: [] }
+    }
+
+    const risk = elder.riskAssessment
+
+    if (!risk) {
+      messages.push('需要先完成健康风险评估')
+      return { valid: false, messages }
+    }
+
+    if (!risk.lastDoctorAdviceDate) {
+      messages.push('缺少最近一次医生建议日期')
+    } else {
+      const adviceDate = new Date(risk.lastDoctorAdviceDate)
+      const threeMonthsAgo = new Date()
+      threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3)
+      if (adviceDate < threeMonthsAgo) {
+        messages.push('最近一次医生建议已超过3个月，请更新')
+      }
+    }
+
+    if (!risk.familyConfirmed) {
+      messages.push('需要家属签字确认参加康复课程')
+    }
+
+    if (!risk.volunteerAssigned) {
+      messages.push('需要安排志愿者陪同参加康复训练')
+    }
+
+    if (!risk.doctorRecommendation || risk.doctorRecommendation.trim().length === 0) {
+      messages.push('需要填写详细的医生康复建议')
+    }
+
+    return { valid: messages.length === 0, messages }
+  },
+
+  buildReservedResources: (courseId, scheduleId) => {
+    const state = get()
+    const course = state.getCourseById(courseId)
+    if (!course) {
+      return { equipmentIds: [], venueTimeSlot: null }
+    }
+
+    const schedule = scheduleId
+      ? course.schedules.find(s => s.id === scheduleId)
+      : course.schedules[0]
+
+    const venue = schedule ? state.getVenueById(schedule.venueId) : undefined
+    const equipmentIds = course.requiredEquipmentIds || []
+
+    return {
+      equipmentIds,
+      venueTimeSlot: schedule ? {
+        venueId: schedule.venueId,
+        scheduleId: schedule.id,
+        dayOfWeek: schedule.dayOfWeek,
+        startTime: schedule.startTime,
+        endTime: schedule.endTime,
+      } : null,
+    }
+  },
+
   registerCourse: (elderId, courseId) => {
     const state = get()
     const elder = state.getElderById(elderId)
@@ -964,6 +1330,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     }
 
+    if (course.isRehabilitation) {
+      const rehabCheck = state.validateRehabilitationRegistration(elderId, courseId)
+      if (!rehabCheck.valid) {
+        return { success: false, message: '康复课程特殊要求：' + rehabCheck.messages.join('；') }
+      }
+    }
+
     const isFull = course.currentParticipants >= course.maxParticipants
     const needsHealthCheck = course.requiresHealthCheck
     const hasRiskAssessment = !!elder.riskAssessment
@@ -977,6 +1350,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { success: false, message: '根据健康评估，不建议参加运动类课程' }
     }
 
+    const reservedResources = (course.isRehabilitation || (course.requiredEquipmentIds && course.requiredEquipmentIds.length > 0))
+      ? state.buildReservedResources(courseId)
+      : undefined
+
     const newRegistration: Registration = {
       id: `r${Date.now()}`,
       elderId,
@@ -987,6 +1364,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       confirmedBy: !needsHealthCheck ? 'system' : undefined,
       waitlistPosition: isFull ? course.waitlistCount + 1 : undefined,
       registrationDate: new Date().toISOString().split('T')[0],
+      reinstatementPending: false,
+      reservedResources,
+      originalWaitlistPosition: isFull ? course.waitlistCount + 1 : undefined,
     }
 
     if (isFull) {
@@ -1009,6 +1389,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         ),
       }))
 
+      if (course.isRehabilitation) {
+        return { success: true, message: '康复课程已满，已加入候补队列（顺位第' + (course.waitlistCount + 1) + '位）。请注意：候补期间需确保医生建议、家属确认和志愿者陪同三项均有效。' }
+      }
+
       return { success: true, message: '课程已满，已加入候补队列，顺位第' + (course.waitlistCount + 1) + '位' }
     }
 
@@ -1019,6 +1403,10 @@ export const useAppStore = create<AppState>((set, get) => ({
           c.id === courseId ? { ...c, currentParticipants: c.currentParticipants + 1 } : c
         ),
       }))
+
+      if (course.isRehabilitation) {
+        return { success: true, message: '康复课程报名成功，等待社工确认健康风险（含医生建议、家属确认、志愿者陪同三项）' }
+      }
 
       return { success: true, message: '报名成功，等待社工确认健康风险' }
     }
@@ -1033,23 +1421,77 @@ export const useAppStore = create<AppState>((set, get) => ({
     return { success: true, message: '报名成功' }
   },
 
-  confirmHealthCheck: (registrationId, socialWorkerId) => {
+  confirmHealthCheck: (registrationId, socialWorkerId, extra) => {
+    set((state) => {
+      const registration = state.registrations.find(r => r.id === registrationId)
+      if (!registration) return state
+
+      const elder = state.getElderById(registration.elderId)
+      if (!elder || !elder.riskAssessment) return state
+
+      const updatedRiskAssessment = { ...elder.riskAssessment }
+      if (extra?.familyConfirmed !== undefined) {
+        updatedRiskAssessment.familyConfirmed = extra.familyConfirmed
+        if (extra.familyConfirmed) {
+          updatedRiskAssessment.familyConfirmedDate = new Date().toISOString().split('T')[0]
+          updatedRiskAssessment.familyConfirmedBy = socialWorkerId
+        }
+      }
+      if (extra?.volunteerAssigned !== undefined) {
+        updatedRiskAssessment.volunteerAssigned = extra.volunteerAssigned
+        if (extra.volunteerAssigned) {
+          updatedRiskAssessment.volunteerAssignmentDate = new Date().toISOString().split('T')[0]
+          updatedRiskAssessment.volunteerId = extra.volunteerId
+          updatedRiskAssessment.volunteerName = extra.volunteerName
+        }
+      }
+
+      return {
+        registrations: state.registrations.map((r) =>
+          r.id === registrationId
+            ? {
+                ...r,
+                status: 'confirmed',
+                healthConfirmed: true,
+                healthConfirmationDate: new Date().toISOString().split('T')[0],
+                confirmedBy: socialWorkerId,
+              }
+            : r
+        ),
+        elders: state.elders.map((e) =>
+          e.id === registration.elderId
+            ? { ...e, riskAssessment: updatedRiskAssessment }
+            : e
+        ),
+      }
+    })
+  },
+
+  createDirectorTodo: (todo) => {
+    const newTodo: DirectorTodo = {
+      ...todo,
+      id: `dt${Date.now()}`,
+      createdAt: new Date().toISOString().split('T')[0],
+      status: 'pending',
+    }
     set((state) => ({
-      registrations: state.registrations.map((r) =>
-        r.id === registrationId
-          ? {
-              ...r,
-              status: 'confirmed',
-              healthConfirmed: true,
-              healthConfirmationDate: new Date().toISOString().split('T')[0],
-              confirmedBy: socialWorkerId,
-            }
-          : r
+      directorTodos: [...state.directorTodos, newTodo],
+    }))
+  },
+
+  updateDirectorTodo: (todoId, updates) => {
+    set((state) => ({
+      directorTodos: state.directorTodos.map((t) =>
+        t.id === todoId ? { ...t, ...updates } : t
       ),
     }))
   },
 
-  checkIn: (registrationId, scheduleId, date, status, notes) => {
+  getPendingDirectorTodos: () => {
+    return get().directorTodos.filter(t => t.status === 'pending')
+  },
+
+  checkIn: (registrationId, scheduleId, date, status, notes, suspensionSuggestion) => {
     const state = get()
     const registration = state.registrations.find((r) => r.id === registrationId)
 
@@ -1057,7 +1499,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { success: false, message: '报名记录不存在' }
     }
 
-    if (registration.status === 'suspended') {
+    if (registration.status === 'suspended' && !registration.reinstatementPending) {
       return { success: false, message: '该学员已被暂停上课' }
     }
 
@@ -1069,15 +1511,32 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { success: false, message: '已经签到过' }
     }
 
+    const course = state.getCourseById(registration.courseId)
+    const elder = state.getElderById(registration.elderId)
     const isException = status === 'exception' || status === 'absent'
 
     let consecutiveAbsences = 0
     if (status === 'absent') {
-      const elder = state.getElderById(registration.elderId)
       consecutiveAbsences = (elder?.consecutiveAbsences || 0) + 1
     }
 
     const shouldSuspend = consecutiveAbsences >= 2
+    const absenceStrategy = course?.absenceStrategy || 'suspend'
+    const needSocialWorkerVisit = shouldSuspend && absenceStrategy === 'socialWorkerVisit'
+    const needSuspend = shouldSuspend && absenceStrategy === 'suspend'
+
+    let finalSuspensionSuggestion = suspensionSuggestion
+    if (status === 'exception' && !finalSuspensionSuggestion) {
+      finalSuspensionSuggestion = {
+        suggested: true,
+        reason: '老师标记异常，建议临时停课并通知家属',
+        severity: 'danger',
+      }
+    }
+
+    const shouldReportToDirector = isException || !!finalSuspensionSuggestion?.suggested
+
+    const directorTodoCreated = shouldReportToDirector
 
     const newAttendance: Attendance = {
       id: `a${Date.now()}`,
@@ -1088,15 +1547,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       date,
       status,
       checkInTime: status === 'present' || status === 'late' ? new Date().toTimeString().slice(0, 5) : undefined,
-      notes: notes || (shouldSuspend ? '连续缺勤两次，已触发暂停机制' : undefined),
+      notes: notes || (needSuspend ? '连续缺勤两次，已触发暂停机制（暂停策略）' : needSocialWorkerVisit ? '连续缺勤两次，已触发社工回访机制' : undefined),
       isException,
-      reportedToDirector: isException,
+      reportedToDirector: shouldReportToDirector,
+      suspensionSuggestion: finalSuspensionSuggestion,
       handled: false,
+      directorTodoCreated,
     }
 
     set((state) => {
       let updatedElders = state.elders
       let updatedRegistrations = state.registrations
+      let newTodos: DirectorTodo[] = []
 
       if (status === 'absent') {
         updatedElders = state.elders.map((e) =>
@@ -1104,18 +1566,53 @@ export const useAppStore = create<AppState>((set, get) => ({
             ? {
                 ...e,
                 consecutiveAbsences,
-                isSuspended: shouldSuspend,
-                suspensionReason: shouldSuspend ? '连续缺勤两次' : undefined,
+                isSuspended: needSuspend ? true : e.isSuspended,
+                suspensionReason: needSuspend ? '连续缺勤两次（暂停策略）' : needSocialWorkerVisit ? '连续缺勤两次（转社工回访）' : e.suspensionReason,
+                socialWorkerVisitAssigned: needSocialWorkerVisit ? true : e.socialWorkerVisitAssigned,
+                socialWorkerAssignmentDate: needSocialWorkerVisit ? new Date().toISOString().split('T')[0] : e.socialWorkerAssignmentDate,
               }
             : e
         )
 
-        if (shouldSuspend) {
+        if (needSuspend) {
           updatedRegistrations = state.registrations.map((r) =>
             r.elderId === registration.elderId && r.status === 'confirmed'
-              ? { ...r, status: 'suspended', suspensionReason: '连续缺勤两次' }
+              ? { ...r, status: 'suspended', suspensionReason: '连续缺勤两次（暂停策略）', reinstatementPending: false }
               : r
           )
+          newTodos.push({
+            id: `dt${Date.now()}_suspend`,
+            type: 'absenceSuspend',
+            elderId: registration.elderId,
+            elderName: elder?.name || '',
+            courseId: registration.courseId,
+            courseName: course?.name || '',
+            registrationId: registration.id,
+            title: `连续缺勤暂停-${course?.name || ''}`,
+            description: `${elder?.name || ''}连续两次缺勤${course?.name || ''}，已自动暂停上课资格，待申请复课。课程缺勤策略为：暂停。`,
+            attendanceId: newAttendance.id,
+            status: 'pending',
+            priority: 'medium',
+            createdAt: new Date().toISOString().split('T')[0],
+          })
+        }
+
+        if (needSocialWorkerVisit) {
+          newTodos.push({
+            id: `dt${Date.now()}_visit`,
+            type: 'absenceSocialWorker',
+            elderId: registration.elderId,
+            elderName: elder?.name || '',
+            courseId: registration.courseId,
+            courseName: course?.name || '',
+            registrationId: registration.id,
+            title: `连续缺勤转社工回访-${course?.name || ''}`,
+            description: `${elder?.name || ''}连续两次缺勤${course?.name || ''}，课程缺勤策略为：转社工回访。请安排社工进行家访回访。`,
+            attendanceId: newAttendance.id,
+            status: 'pending',
+            priority: 'high',
+            createdAt: new Date().toISOString().split('T')[0],
+          })
         }
       } else if (status === 'present') {
         updatedElders = state.elders.map((e) =>
@@ -1123,15 +1620,40 @@ export const useAppStore = create<AppState>((set, get) => ({
         )
       }
 
+      if (status === 'exception' && finalSuspensionSuggestion) {
+        newTodos.push({
+          id: `dt${Date.now()}_abnormal`,
+          type: 'abnormalStatus',
+          elderId: registration.elderId,
+          elderName: elder?.name || '',
+          courseId: registration.courseId,
+          courseName: course?.name || '',
+          registrationId: registration.id,
+          title: `老人状态异常-${course?.name || ''}`,
+          description: `老师在${course?.name || ''}签到时标记${elder?.name || ''}状态异常。停课建议：${finalSuspensionSuggestion.reason}。请主任尽快处理。`,
+          attendanceId: newAttendance.id,
+          status: 'pending',
+          priority: finalSuspensionSuggestion.severity === 'danger' ? 'high' : 'medium',
+          createdAt: new Date().toISOString().split('T')[0],
+        })
+      }
+
       return {
         attendances: [...state.attendances, newAttendance],
         elders: updatedElders,
         registrations: updatedRegistrations,
+        directorTodos: [...state.directorTodos, ...newTodos],
       }
     })
 
-    if (shouldSuspend) {
-      return { success: true, message: '已标记缺勤，连续缺勤两次，已自动暂停该学员后续报名资格' }
+    if (needSuspend) {
+      return { success: true, message: '已标记缺勤，连续缺勤两次。课程策略为暂停，已自动暂停该学员后续报名资格并生成主任待办。' }
+    }
+    if (needSocialWorkerVisit) {
+      return { success: true, message: '已标记缺勤，连续缺勤两次。课程策略为转社工回访，已生成社工回访主任待办。' }
+    }
+    if (status === 'exception' && finalSuspensionSuggestion) {
+      return { success: true, message: `已记录异常签到，停课建议：${finalSuspensionSuggestion.reason}，已自动生成主任待办。` }
     }
 
     const statusText = {
@@ -1150,7 +1672,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     if (!approval) return
 
-    set((state) => ({
+    const preservedResources = approval.preservedResources || []
+    const preservedWaitlistPosition = approval.preservedWaitlistPosition
+
+    set({
       reinstatementApprovals: state.reinstatementApprovals.map((a) =>
         a.id === approvalId
           ? {
@@ -1158,23 +1683,48 @@ export const useAppStore = create<AppState>((set, get) => ({
               status: 'approved',
               reviewerId,
               reviewDate: new Date().toISOString().split('T')[0],
-              reviewComments: comments,
+              reviewComments: comments || a.reviewComments
             }
           : a
       ),
-      elders: state.elders.map((e) =>
-        e.id === approval.elderId
-          ? { ...e, isSuspended: false, consecutiveAbsences: 0, suspensionReason: undefined }
-          : e
+      registrations: state.registrations.map((r) => {
+        if (r.id !== approval.registrationId) return r
+        const updated = {
+          ...r,
+          status: 'enrolled' as const,
+          reinstatementPending: false,
+          originalWaitlistPosition: undefined as number | undefined,
+          reservedResources: [] as ReservedResource[]
+        }
+        return updated
+      }),
+      waitlistEntries: state.waitlistEntries.map((w) =>
+        w.registrationId === approval.registrationId
+          ? { ...w, position: preservedWaitlistPosition ?? w.position }
+          : w
       ),
-      registrations: state.registrations.map((r) =>
-        r.id === approval.registrationId ? { ...r, status: 'confirmed', suspensionReason: undefined } : r
-      ),
-    }))
+      directorTodos: state.directorTodos.map((t) =>
+        t.registrationId === approval.registrationId && t.type === 'reinstatementApproval'
+          ? { ...t, status: 'completed' as const }
+          : t
+      )
+    })
+
+    if (preservedResources.length > 0) {
+      console.log('[复课审批通过] 已释放资源占用保护:', preservedResources.map(r => r.type).join(', '))
+    }
+    console.log('[复课审批通过] 学员已恢复正常在读状态:', approval.elderName)
   },
 
   rejectReinstatement: (approvalId, reviewerId, comments) => {
-    set((state) => ({
+    const state = get()
+    const approval = state.reinstatementApprovals.find((a) => a.id === approvalId)
+
+    if (!approval) return
+
+    const preservedResources = approval.preservedResources || []
+
+    set({
       reinstatementApprovals: state.reinstatementApprovals.map((a) =>
         a.id === approvalId
           ? {
@@ -1182,141 +1732,241 @@ export const useAppStore = create<AppState>((set, get) => ({
               status: 'rejected',
               reviewerId,
               reviewDate: new Date().toISOString().split('T')[0],
-              reviewComments: comments,
+              reviewComments: comments || a.reviewComments
             }
           : a
       ),
-    }))
+      registrations: state.registrations.map((r) => {
+        if (r.id !== approval.registrationId) return r
+        return {
+          ...r,
+          reinstatementPending: false,
+          originalWaitlistPosition: undefined as number | undefined,
+          reservedResources: [] as ReservedResource[]
+        }
+      }),
+      waitlistEntries: state.waitlistEntries.filter((w) => w.registrationId !== approval.registrationId)
+    })
+
+    if (preservedResources.length > 0) {
+      console.log('[复课审批拒绝] 已释放占用的资源:', preservedResources.map(r => r.resourceId).join(', '))
+    }
   },
 
-  applyReinstatement: (elderId, courseId, registrationId, reason, applicantId) => {
-    const existingApproval = get().reinstatementApprovals.find(
-      (a) => a.elderId === elderId && a.courseId === courseId && a.status === 'pending'
-    )
+  applyReinstatement: (registrationId, reason) => {
+    const state = get()
+    const registration = state.registrations.find((r) => r.id === registrationId)
+    if (!registration) return
 
-    if (existingApproval) {
-      return
-    }
+    const course = state.courses.find((c) => c.id === registration.courseId)
+    const elder = state.elders.find((e) => e.id === registration.elderId)
+    if (!course || !elder) return
+
+    const currentWaitlist = state.waitlistEntries.find((w) => w.registrationId === registrationId)
+    const originalWaitlistPosition = currentWaitlist?.position
+
+    const reservedResources = state.buildReservedResources(registration, course)
 
     const newApproval: ReinstatementApproval = {
-      id: `ra${Date.now()}`,
-      elderId,
-      courseId,
+      id: 'ra_' + Date.now(),
       registrationId,
-      reason,
-      status: 'pending',
-      applicantId,
+      elderId: registration.elderId,
+      elderName: elder.name,
+      courseId: registration.courseId,
+      courseName: course.name,
       applicationDate: new Date().toISOString().split('T')[0],
+      reason: reason || '老人身体状态恢复，申请复课',
+      status: 'pending',
+      preservedWaitlistPosition: originalWaitlistPosition,
+      preservedResources: reservedResources
     }
 
-    set((state) => ({
+    set({
       reinstatementApprovals: [...state.reinstatementApprovals, newApproval],
-    }))
+      registrations: state.registrations.map((r) =>
+        r.id === registrationId
+          ? {
+              ...r,
+              reinstatementPending: true,
+              originalWaitlistPosition,
+              reservedResources
+            }
+          : r
+      )
+    })
+
+    state.createDirectorTodo({
+      type: 'reinstatementApproval',
+      elderId: elder.id,
+      elderName: elder.name,
+      courseId: course.id,
+      courseName: course.name,
+      registrationId,
+      title: '复课申请待审批',
+      description: `${elder.name} 申请复课「${course.name}」，原候补顺位: ${originalWaitlistPosition ?? '无'}，占用资源数: ${reservedResources.length}`,
+      priority: 'medium'
+    })
   },
 
   promoteWaitlist: (courseId) => {
     const state = get()
-    const course = state.getCourseById(courseId)
+    const course = state.courses.find((c) => c.id === courseId)
     if (!course) return
 
-    const waitlist = state.waitlistItems
-      .filter((w) => w.courseId === courseId)
+    const enrolledCount = state.registrations.filter(
+      (r) =>
+        r.courseId === courseId &&
+        r.status === 'enrolled' &&
+        !r.reinstatementPending
+    ).length
+
+    if (enrolledCount >= course.capacity) return
+
+    const availableSlots = course.capacity - enrolledCount
+
+    const promotableWaitlist = state.waitlistEntries
+      .filter((w) => w.courseId === courseId && w.status === 'waiting')
+      .filter((w) => {
+        const reg = state.registrations.find((r) => r.id === w.registrationId)
+        return reg && !reg.reinstatementPending
+      })
       .sort((a, b) => a.position - b.position)
+      .slice(0, availableSlots)
 
-    if (waitlist.length === 0) return
+    if (promotableWaitlist.length === 0) return
 
-    const firstInLine = waitlist[0]
-    const hasCapacity = course.currentParticipants < course.maxParticipants
-
-    if (hasCapacity) {
-      set((state) => ({
-        registrations: state.registrations.map((r) =>
-          r.id === firstInLine.registrationId
-            ? { ...r, status: 'pending', waitlistPosition: undefined }
-            : r
-        ),
-        waitlistItems: state.waitlistItems
-          .filter((w) => w.id !== firstInLine.id)
-          .map((w) => (w.courseId === courseId ? { ...w, position: w.position - 1 } : w)),
-        courses: state.courses.map((c) =>
-          c.id === courseId ? { ...c, waitlistCount: c.waitlistCount - 1 } : c
-        ),
-      }))
-    }
+    set({
+      waitlistEntries: state.waitlistEntries.map((w) =>
+        promotableWaitlist.find((p) => p.id === w.id)
+          ? { ...w, status: 'promoted' as const, promotedDate: new Date().toISOString().split('T')[0] }
+          : w
+      ),
+      registrations: state.registrations.map((r) =>
+        promotableWaitlist.find((p) => p.registrationId === r.id)
+          ? { ...r, status: 'enrolled' as const, waitlisted: false }
+          : r
+      )
+    })
   },
 
   removeWaitlist: (waitlistId) => {
     const state = get()
-    const waitlistItem = state.waitlistItems.find(w => w.id === waitlistId)
-    if (!waitlistItem) return
+    const waitlistEntry = state.waitlistEntries.find((w) => w.id === waitlistId)
+    if (!waitlistEntry) return
 
-    set((state) => ({
-      waitlistItems: state.waitlistItems
-        .filter((w) => w.id !== waitlistId)
-        .map((w) => (w.courseId === waitlistItem.courseId && w.position > waitlistItem.position
-          ? { ...w, position: w.position - 1 }
-          : w
-        )),
+    set({
+      waitlistEntries: state.waitlistEntries.filter((w) => w.id !== waitlistId),
       registrations: state.registrations.map((r) =>
-        r.id === waitlistItem.registrationId ? { ...r, status: 'cancelled', waitlistPosition: undefined } : r
-      ),
-      courses: state.courses.map((c) =>
-        c.id === waitlistItem.courseId ? { ...c, waitlistCount: c.waitlistCount - 1 } : c
-      ),
-    }))
+        r.id === waitlistEntry.registrationId
+          ? { ...r, waitlisted: false, status: 'cancelled' as const }
+          : r
+      )
+    })
   },
 
   markWaitlistNotified: (waitlistId) => {
-    set((state) => ({
-      waitlistItems: state.waitlistItems.map((w) =>
-        w.id === waitlistId ? { ...w, notified: true } : w
-      ),
-    }))
+    const state = get()
+    set({
+      waitlistEntries: state.waitlistEntries.map((w) =>
+        w.id === waitlistId ? { ...w, notified: true, notifiedDate: new Date().toISOString().split('T')[0] } : w
+      )
+    })
   },
 
   getStatistics: () => {
     const state = get()
-    const today = new Date().toISOString().split('T')[0]
-    const todayAttendances = state.attendances.filter((a) => a.date === today)
-    const presentCount = todayAttendances.filter((a) => a.status === 'present').length
-    const totalToday = todayAttendances.length
-    const attendanceRate = totalToday > 0 ? Math.round((presentCount / totalToday) * 100) : 0
+    const now = new Date()
+    const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+    const today = now.toISOString().split('T')[0]
 
-    const totalCapacity = state.courses.reduce((sum, c) => sum + c.maxParticipants, 0)
-    const totalEnrolled = state.courses.reduce((sum, c) => sum + c.currentParticipants, 0)
-    const averageOccupancy = totalCapacity > 0 ? Math.round((totalEnrolled / totalCapacity) * 100) : 0
+    const elderCount = state.elders.length
+    const courseCount = state.courses.length
+    const registrationCount = state.registrations.length
+
+    const riskUnconfirmed = state.registrations.filter(
+      (r) => !r.healthConfirmed && r.status === 'pending'
+    ).length
+
+    const waitlistPendingPromotion = state.registrations.filter(
+      (r) =>
+        r.waitlisted &&
+        r.status === 'pending' &&
+        !r.reinstatementPending
+    ).length
+
+    const suspendedByAbsence = state.registrations.filter(
+      (r) => r.status === 'suspended' && !r.reinstatementPending
+    ).length
+
+    const reinstatementPending = state.registrations.filter(
+      (r) => r.reinstatementPending
+    ).length
+
+    const normalEnrolled = state.registrations.filter(
+      (r) => r.status === 'enrolled' && !r.reinstatementPending
+    ).length
+
+    const todayAttendanceCount = state.attendances.filter((a) => a.checkInDate === today).length
+
+    const monthlyRevenue = state.registrations
+      .filter((r) => r.paymentStatus === 'paid')
+      .reduce((sum, r) => sum + (r.amountPaid ?? 0), 0)
+
+    const pendingDirectorTodos = state.directorTodos.filter((t) => t.status === 'pending').length
 
     return {
-      totalCourses: state.courses.length,
-      totalElders: state.elders.length,
-      totalRegistrations: state.registrations.length,
-      attendanceRate,
-      averageOccupancy,
-      pendingApprovals: state.reinstatementApprovals.filter((a) => a.status === 'pending').length,
-      todayAbsences: todayAttendances.filter((a) => a.status === 'absent').length,
-      todayExceptions: todayAttendances.filter((a) => a.isException).length,
+      elderCount,
+      courseCount,
+      registrationCount,
+      todayAttendanceCount,
+      monthlyRevenue,
+      activeRegistrations: normalEnrolled,
+      waitlistCount: waitlistPendingPromotion,
+      riskUnconfirmed,
+      waitlistPendingPromotion,
+      suspendedByAbsence,
+      reinstatementPending,
+      normalEnrolled,
+      pendingDirectorTodos
     }
   },
 
   getElderById: (id) => get().elders.find((e) => e.id === id),
+
   getCourseById: (id) => get().courses.find((c) => c.id === id),
+
   getTeacherById: (id) => get().teachers.find((t) => t.id === id),
+
   getVenueById: (id) => get().venues.find((v) => v.id === id),
-  getLevelById: (id) => get().courseLevels.find((l) => l.id === id),
+
+  getLevelById: (id) => get().levels.find((l) => l.id === id),
 
   getRegistrationsByElder: (elderId) =>
-    get().registrations.filter((r) => r.elderId === elderId),
+    get()
+      .registrations.filter((r) => r.elderId === elderId)
+      .sort((a, b) => new Date(b.enrollmentDate).getTime() - new Date(a.enrollmentDate).getTime()),
 
   getRegistrationsByCourse: (courseId) =>
-    get().registrations.filter((r) => r.courseId === courseId),
+    get()
+      .registrations.filter((r) => r.courseId === courseId)
+      .sort((a, b) => new Date(b.enrollmentDate).getTime() - new Date(a.enrollmentDate).getTime()),
 
   getAttendancesByCourseAndDate: (courseId, date) =>
-    get().attendances.filter((a) => a.courseId === courseId && a.date === date),
+    get().attendances.filter((a) => a.courseId === courseId && a.checkInDate === date),
 
-  getSuspendedElders: () => get().elders.filter((e) => e.isSuspended),
+  getSuspendedElders: () =>
+    get().registrations.filter((r) => r.status === 'suspended' && !r.reinstatementPending),
 
-  getTodayExceptions: () => {
-    const today = new Date().toISOString().split('T')[0]
-    return get().attendances.filter((a) => a.date === today && a.isException)
-  },
+  getTodayExceptions: () =>
+    get().attendances.filter(
+      (a) => a.checkInDate === new Date().toISOString().split('T')[0] && a.status === 'exception'
+    ),
+
+  getRegistrationsWithDetailedStatus: () => {
+    const state = get()
+    return state.registrations.map((r) => ({
+      ...r,
+      detailedStatus: state.getDetailedRegistrationStatus(r)
+    }))
+  }
 }))

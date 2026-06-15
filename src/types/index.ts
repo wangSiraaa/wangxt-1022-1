@@ -1,4 +1,13 @@
-export type UserRole = 'socialWorker' | 'elder' | 'teacher' | 'director'
+export type UserRole = 'socialWorker' | 'elder' | 'teacher' | 'director' | 'volunteer'
+
+export type AbsenceStrategy = 'suspend' | 'socialWorkerVisit'
+
+export type DetailedRegistrationStatus =
+  | 'riskUnconfirmed'
+  | 'waitlistPendingPromotion'
+  | 'suspendedByAbsence'
+  | 'reinstatementPending'
+  | 'normalEnrolled'
 
 export interface User {
   id: string
@@ -35,8 +44,16 @@ export interface RiskAssessment {
   highBloodPressure: boolean
   diabetes: boolean
   doctorRecommendation: string
+  lastDoctorAdviceDate?: string
   canParticipateSports: boolean
   requiresGuardian: boolean
+  familyConfirmed: boolean
+  familyConfirmedBy?: string
+  familyConfirmedDate?: string
+  volunteerAssigned: boolean
+  volunteerId?: string
+  volunteerName?: string
+  volunteerAssignmentDate?: string
 }
 
 export interface Elder {
@@ -56,6 +73,9 @@ export interface Elder {
   consecutiveAbsences: number
   isSuspended: boolean
   suspensionReason?: string
+  socialWorkerVisitAssigned?: boolean
+  socialWorkerId?: string
+  socialWorkerAssignmentDate?: string
 }
 
 export interface Teacher {
@@ -87,7 +107,7 @@ export interface CourseLevel {
   requiredPhysicalCondition: string
 }
 
-export type CourseType = 'calligraphy' | 'dance' | 'health' | 'sports'
+export type CourseType = 'calligraphy' | 'dance' | 'health' | 'sports' | 'rehabilitation'
 
 export interface CourseSchedule {
   id: string
@@ -111,6 +131,9 @@ export interface Course {
   currentParticipants: number
   waitlistCount: number
   requiresHealthCheck: boolean
+  isRehabilitation: boolean
+  absenceStrategy: AbsenceStrategy
+  requiredEquipmentIds?: string[]
   schedules: CourseSchedule[]
   status: 'draft' | 'published' | 'completed' | 'cancelled'
   createdBy: string
@@ -118,6 +141,17 @@ export interface Course {
 }
 
 export type RegistrationStatus = 'pending' | 'confirmed' | 'waitlisted' | 'cancelled' | 'suspended'
+
+export interface ReservedResource {
+  equipmentIds: string[]
+  venueTimeSlot: {
+    venueId: string
+    scheduleId: string
+    dayOfWeek: number
+    startTime: string
+    endTime: string
+  } | null
+}
 
 export interface Registration {
   id: string
@@ -132,9 +166,18 @@ export interface Registration {
   cancelReason?: string
   suspensionReason?: string
   suspensionEndDate?: string
+  reinstatementPending: boolean
+  reservedResources?: ReservedResource
+  originalWaitlistPosition?: number
 }
 
 export type AttendanceStatus = 'present' | 'absent' | 'late' | 'leave' | 'exception'
+
+export interface SuspensionSuggestion {
+  suggested: boolean
+  reason: string
+  severity: 'warning' | 'danger'
+}
 
 export interface Attendance {
   id: string
@@ -149,6 +192,8 @@ export interface Attendance {
   isException: boolean
   reportedToDirector: boolean
   handled: boolean
+  suspensionSuggestion?: SuspensionSuggestion
+  directorTodoCreated: boolean
 }
 
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected'
@@ -166,6 +211,8 @@ export interface ReinstatementApproval {
   reviewerId?: string
   reviewDate?: string
   reviewComments?: string
+  preservedWaitlistPosition?: number
+  preservedResources?: ReservedResource
 }
 
 export interface WaitlistItem {
@@ -179,6 +226,27 @@ export interface WaitlistItem {
   notified: boolean
 }
 
+export type DirectorTodoType = 'abnormalStatus' | 'absenceSuspend' | 'absenceSocialWorker' | 'reinstatementApproval'
+
+export interface DirectorTodo {
+  id: string
+  type: DirectorTodoType
+  elderId: string
+  elderName: string
+  courseId: string
+  courseName: string
+  registrationId: string
+  title: string
+  description: string
+  attendanceId?: string
+  status: 'pending' | 'processing' | 'completed'
+  priority: 'high' | 'medium' | 'low'
+  createdAt: string
+  handledBy?: string
+  handledAt?: string
+  handleNotes?: string
+}
+
 export interface Statistics {
   totalCourses: number
   totalElders: number
@@ -188,6 +256,12 @@ export interface Statistics {
   pendingApprovals: number
   todayAbsences: number
   todayExceptions: number
+  riskUnconfirmedCount: number
+  waitlistPendingCount: number
+  suspendedByAbsenceCount: number
+  reinstatementPendingCount: number
+  normalEnrolledCount: number
+  directorPendingTodos: number
 }
 
 export type PageType = 'home' | 'socialWorker' | 'elder' | 'checkin' | 'director' | 'healthCheck' | 'waitlist' | 'absentList' | 'reinstatement' | 'statistics'

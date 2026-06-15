@@ -14,11 +14,16 @@ import {
   FileText,
   AlertCircle,
   ChevronRight,
+  Stethoscope,
+  UserCheck,
+  ShieldCheck,
+  HandHeart,
+  Info,
 } from 'lucide-react'
 import { useAppStore } from '../store'
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '../components/Card'
 import { Button } from '../components/Button'
-import { StatusBadge } from '../components/StatusBadge'
+import { StatusBadge, RegistrationStatusBadge, StatusLegend } from '../components/StatusBadge'
 import { Empty } from '../components/Empty'
 import type { Course, CourseType, Registration } from '../types'
 
@@ -29,6 +34,7 @@ const courseTypeNames: Record<CourseType, string> = {
   dance: '舞蹈',
   sports: '运动',
   health: '健康',
+  rehabilitation: '康复',
 }
 
 const courseTypeColors: Record<CourseType, string> = {
@@ -36,6 +42,7 @@ const courseTypeColors: Record<CourseType, string> = {
   dance: 'bg-purple-100 text-purple-700',
   sports: 'bg-green-100 text-green-700',
   health: 'bg-red-100 text-red-700',
+  rehabilitation: 'bg-teal-100 text-teal-700',
 }
 
 const ElderPage: React.FC = () => {
@@ -43,20 +50,21 @@ const ElderPage: React.FC = () => {
     currentElderId,
     getCurrentElder,
     courses,
-    registrations,
     registerCourse,
     getRegistrationsByElder,
     getCourseById,
     applyReinstatement,
     getTeacherById,
     getVenueById,
+    getDetailedRegistrationStatus,
+    validateRehabilitationRegistration,
   } = useAppStore()
 
   const [activeTab, setActiveTab] = useState<TabType>('hall')
   const [selectedType, setSelectedType] = useState<CourseType | 'all'>('all')
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null)
   const [showReinstatementModal, setShowReinstatementModal] = useState(false)
-  const [reinstatementCourse, setReinstatementCourse] = useState<{ courseId: string; registrationId: string } | null>(null)
+  const [reinstatementRegistrationId, setReinstatementRegistrationId] = useState<string | null>(null)
   const [reinstatementReason, setReinstatementReason] = useState('')
   const [toast, setToast] = useState<{ show: boolean; message: string; type: 'success' | 'error' | 'warning' }>({ show: false, message: '', type: 'success' })
 
@@ -72,7 +80,7 @@ const ElderPage: React.FC = () => {
     })
   }, [courses, selectedType])
 
-  const getRegistrationStatus = (courseId: string): Registration | undefined => {
+  const getRegistration = (courseId: string): Registration | undefined => {
     return myRegistrations.find(r => r.courseId === courseId && r.status !== 'cancelled')
   }
 
@@ -92,42 +100,19 @@ const ElderPage: React.FC = () => {
   }
 
   const handleApplyReinstatement = () => {
-    if (!currentElderId || !reinstatementCourse) return
+    if (!reinstatementRegistrationId) return
 
-    applyReinstatement(
-      currentElderId,
-      reinstatementCourse.courseId,
-      reinstatementCourse.registrationId,
-      reinstatementReason,
-      currentElderId
-    )
+    applyReinstatement(reinstatementRegistrationId, reinstatementReason)
 
-    showToast('复课申请已提交，等待主任审批', 'success')
+    showToast('复课申请已提交，等待主任审批。期间候补顺位、器材场地均已锁定保护。', 'success')
     setShowReinstatementModal(false)
     setReinstatementReason('')
-    setReinstatementCourse(null)
+    setReinstatementRegistrationId(null)
   }
 
-  const openReinstatementModal = (courseId: string, registrationId: string) => {
-    setReinstatementCourse({ courseId, registrationId })
+  const openReinstatementModal = (registrationId: string) => {
+    setReinstatementRegistrationId(registrationId)
     setShowReinstatementModal(true)
-  }
-
-  const getRegistrationStatusBadge = (registration: Registration) => {
-    switch (registration.status) {
-      case 'confirmed':
-        return <StatusBadge status="success">已报名</StatusBadge>
-      case 'pending':
-        return <StatusBadge status="pending">待确认</StatusBadge>
-      case 'waitlisted':
-        return <StatusBadge status="warning">候补第{registration.waitlistPosition}位</StatusBadge>
-      case 'suspended':
-        return <StatusBadge status="error">已暂停</StatusBadge>
-      case 'cancelled':
-        return <StatusBadge status="info">已取消</StatusBadge>
-      default:
-        return null
-    }
   }
 
   const getButtonStatus = (course: Course, registration?: Registration) => {
@@ -146,28 +131,74 @@ const ElderPage: React.FC = () => {
       if (course.requiresHealthCheck && course.type === 'sports' && !currentElder.riskAssessment?.canParticipateSports) {
         return { disabled: true, text: '不建议参加运动课程', variant: 'secondary' as const }
       }
+
+      if (course.isRehabilitation && currentElder) {
+        const rehabValidation = validateRehabilitationRegistration(currentElder, course)
+        if (!rehabValidation.valid) {
+          return { disabled: true, text: rehabValidation.message, variant: 'secondary' as const }
+        }
+      }
+
       const isFull = course.currentParticipants >= course.maxParticipants
-      return { 
-        disabled: false, 
-        text: isFull ? '加入候补' : '立即报名', 
-        variant: 'primary' as const 
+      return {
+        disabled: false,
+        text: isFull ? (course.isRehabilitation ? '康复候补' : '加入候补') : '立即报名',
+        variant: 'primary' as const
       }
     }
 
-    if (registration.status === 'confirmed') {
-      return { disabled: true, text: '已报名', variant: 'secondary' as const }
+    const detailedStatus = getDetailedRegistrationStatus(registration)
+
+    if (detailedStatus === 'normalEnrolled') {
+      return { disabled: true, text: '正常在读', variant: 'secondary' as const }
     }
-    if (registration.status === 'pending') {
-      return { disabled: true, text: '待健康确认', variant: 'secondary' as const }
+    if (detailedStatus === 'riskUnconfirmed') {
+      return { disabled: true, text: '风险待确认', variant: 'secondary' as const }
     }
-    if (registration.status === 'waitlisted') {
+    if (detailedStatus === 'waitlistPendingPromotion') {
       return { disabled: true, text: `候补第${registration.waitlistPosition}位`, variant: 'secondary' as const }
     }
-    if (registration.status === 'suspended') {
+    if (detailedStatus === 'reinstatementPending') {
+      return { disabled: true, text: '复课待批中', variant: 'secondary' as const }
+    }
+    if (detailedStatus === 'suspendedByAbsence') {
       return { disabled: false, text: '申请复课', variant: 'primary' as const }
     }
 
     return { disabled: true, text: '立即报名', variant: 'primary' as const }
+  }
+
+  const getRehabRequirementStatus = () => {
+    if (!currentElder) return null
+
+    const threeMonthsAgo = new Date()
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3)
+
+    const hasValidDoctorAdvice =
+      !!currentElder.lastDoctorAdviceDate &&
+      new Date(currentElder.lastDoctorAdviceDate) >= threeMonthsAgo
+
+    return {
+      doctorAdvice: {
+        ok: hasValidDoctorAdvice,
+        label: '最近医生建议',
+        detail: currentElder.lastDoctorAdviceDate
+          ? `（${currentElder.lastDoctorAdviceDate}，${hasValidDoctorAdvice ? '3个月内有效' : '已过期'}）`
+          : '（缺失）',
+      },
+      familyConfirmed: {
+        ok: !!currentElder.familyConfirmationSigned,
+        label: '家属确认签字',
+        detail: currentElder.familyConfirmationSigned
+          ? `（${currentElder.familyConfirmedByName}）`
+          : '（未签字）',
+      },
+      volunteer: {
+        ok: !!currentElder.assignedVolunteerId,
+        label: '志愿者陪同',
+        detail: currentElder.assignedVolunteerName || '（未安排）',
+      },
+    }
   }
 
   if (!currentElder) {
@@ -181,6 +212,17 @@ const ElderPage: React.FC = () => {
       </div>
     )
   }
+
+  const stats = {
+    total: myRegistrations.filter(r => r.status !== 'cancelled').length,
+    normal: myRegistrations.filter(r => getDetailedRegistrationStatus(r) === 'normalEnrolled').length,
+    risk: myRegistrations.filter(r => getDetailedRegistrationStatus(r) === 'riskUnconfirmed').length,
+    waitlist: myRegistrations.filter(r => getDetailedRegistrationStatus(r) === 'waitlistPendingPromotion').length,
+    suspended: myRegistrations.filter(r => getDetailedRegistrationStatus(r) === 'suspendedByAbsence').length,
+    reinstating: myRegistrations.filter(r => getDetailedRegistrationStatus(r) === 'reinstatementPending').length,
+  }
+
+  const rehabStatus = getRehabRequirementStatus()
 
   return (
     <div className="space-y-6">
@@ -223,8 +265,8 @@ const ElderPage: React.FC = () => {
             </div>
           </div>
           <div className="text-right">
-            <div className="text-3xl font-bold">{myRegistrations.filter(r => r.status === 'confirmed').length}</div>
-            <div className="text-amber-100 text-sm">已报名课程</div>
+            <div className="text-3xl font-bold">{stats.normal}</div>
+            <div className="text-amber-100 text-sm">正常在读</div>
           </div>
         </div>
       </div>
@@ -258,6 +300,46 @@ const ElderPage: React.FC = () => {
 
       {activeTab === 'hall' && (
         <>
+          {rehabStatus && (
+            <Card className="border-teal-200 bg-teal-50/50">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base flex items-center gap-2 text-teal-800">
+                  <Stethoscope size={18} />
+                  康复类课程报名资质
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <div className="grid grid-cols-3 gap-3 text-sm">
+                  <div className={`p-3 rounded-xl border ${rehabStatus.doctorAdvice.ok ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                    <div className="flex items-center gap-1.5 font-medium mb-1">
+                      {rehabStatus.doctorAdvice.ok ? <CheckCircle size={14} className="text-green-600" /> : <XCircle size={14} className="text-red-600" />}
+                      <span className={rehabStatus.doctorAdvice.ok ? 'text-green-800' : 'text-red-800'}>{rehabStatus.doctorAdvice.label}</span>
+                    </div>
+                    <div className="text-xs text-gray-600">{rehabStatus.doctorAdvice.detail}</div>
+                  </div>
+                  <div className={`p-3 rounded-xl border ${rehabStatus.familyConfirmed.ok ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                    <div className="flex items-center gap-1.5 font-medium mb-1">
+                      {rehabStatus.familyConfirmed.ok ? <ShieldCheck size={14} className="text-green-600" /> : <XCircle size={14} className="text-red-600" />}
+                      <span className={rehabStatus.familyConfirmed.ok ? 'text-green-800' : 'text-red-800'}>{rehabStatus.familyConfirmed.label}</span>
+                    </div>
+                    <div className="text-xs text-gray-600">{rehabStatus.familyConfirmed.detail}</div>
+                  </div>
+                  <div className={`p-3 rounded-xl border ${rehabStatus.volunteer.ok ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
+                    <div className="flex items-center gap-1.5 font-medium mb-1">
+                      {rehabStatus.volunteer.ok ? <HandHeart size={14} className="text-green-600" /> : <AlertTriangle size={14} className="text-amber-600" />}
+                      <span className={rehabStatus.volunteer.ok ? 'text-green-800' : 'text-amber-800'}>{rehabStatus.volunteer.label}</span>
+                    </div>
+                    <div className="text-xs text-gray-600">{rehabStatus.volunteer.detail}</div>
+                  </div>
+                </div>
+                <p className="text-xs text-teal-700 flex items-start gap-1">
+                  <Info size={12} className="flex-shrink-0 mt-0.5" />
+                  以上三项为康复类课程报名的前置条件，任一缺失将无法报名康复课程。如有疑问请联系社工。
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
           <div className="flex gap-2 overflow-x-auto pb-2">
             <button
               onClick={() => setSelectedType('all')}
@@ -286,26 +368,33 @@ const ElderPage: React.FC = () => {
 
           <div className="grid grid-cols-2 gap-4">
             {filteredCourses.map((course) => {
-              const registration = getRegistrationStatus(course.id)
+              const registration = getRegistration(course.id)
               const buttonStatus = getButtonStatus(course, registration)
               const isFull = course.currentParticipants >= course.maxParticipants
+              const detailedStatus = registration ? getDetailedRegistrationStatus(registration) : null
 
               return (
                 <Card
                   key={course.id}
                   className={`transition-all duration-300 hover:shadow-xl cursor-pointer ${
                     selectedCourse?.id === course.id ? 'ring-2 ring-amber-500' : ''
-                  }`}
+                  } ${course.isRehabilitation ? 'border-teal-200' : ''}`}
                   onClick={() => setSelectedCourse(course)}
                 >
                   <CardHeader>
                     <div className="flex items-start justify-between">
                       <div>
-                        <div className="flex items-center gap-2 mb-1">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${courseTypeColors[course.type]}`}>
                             {courseTypeNames[course.type]}
                           </span>
-                          {course.requiresHealthCheck && (
+                          {course.isRehabilitation && (
+                            <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-teal-100 text-teal-700">
+                              <Stethoscope size={10} />
+                              康复类
+                            </span>
+                          )}
+                          {course.requiresHealthCheck && !course.isRehabilitation && (
                             <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-600">
                               <Heart size={10} />
                               需健康确认
@@ -320,11 +409,28 @@ const ElderPage: React.FC = () => {
                         </div>
                         <CardTitle className="text-lg">{course.name}</CardTitle>
                       </div>
-                      {registration && getRegistrationStatusBadge(registration)}
+                      {registration && detailedStatus && (
+                        <RegistrationStatusBadge status={detailedStatus} />
+                      )}
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-3">
                     <p className="text-gray-600 text-sm line-clamp-2">{course.description}</p>
+
+                    {course.isRehabilitation && (
+                      <div className="p-3 rounded-xl bg-teal-50 border border-teal-200 text-xs text-teal-800 space-y-1.5">
+                        <div className="font-medium flex items-center gap-1.5">
+                          <Stethoscope size={12} />
+                          康复课程报名前置校验
+                        </div>
+                        <ul className="space-y-0.5 pl-5 list-disc">
+                          <li>需持有3个月内有效医生建议报告</li>
+                          <li>家属须签署知情确认书</li>
+                          <li>需安排固定志愿者陪同</li>
+                        </ul>
+                      </div>
+                    )}
+
                     <div className="grid grid-cols-2 gap-2 text-sm">
                       <div className="flex items-center gap-1 text-gray-500">
                         <Users size={14} />
@@ -366,13 +472,13 @@ const ElderPage: React.FC = () => {
                     )}
                   </CardContent>
                   <CardFooter>
-                    {registration?.status === 'suspended' ? (
+                    {detailedStatus === 'suspendedByAbsence' && registration ? (
                       <Button
                         className="w-full"
                         variant="primary"
                         onClick={(e) => {
                           e.stopPropagation()
-                          openReinstatementModal(course.id, registration.id)
+                          openReinstatementModal(registration.id)
                         }}
                       >
                         <FileText size={16} />
@@ -413,6 +519,35 @@ const ElderPage: React.FC = () => {
 
       {activeTab === 'myCourses' && (
         <div className="space-y-4">
+          <div className="grid grid-cols-6 gap-2">
+            <Card className="bg-white/60 p-3 text-center">
+              <div className="text-2xl font-bold text-gray-800">{stats.total}</div>
+              <div className="text-xs text-gray-500">总报名</div>
+            </Card>
+            <Card className="bg-emerald-50 border-emerald-200 p-3 text-center">
+              <div className="text-2xl font-bold text-emerald-700">{stats.normal}</div>
+              <div className="text-xs text-emerald-600">正常在读</div>
+            </Card>
+            <Card className="bg-red-50 border-red-200 p-3 text-center">
+              <div className="text-2xl font-bold text-red-700">{stats.risk}</div>
+              <div className="text-xs text-red-600">风险未确认</div>
+            </Card>
+            <Card className="bg-amber-50 border-amber-200 p-3 text-center">
+              <div className="text-2xl font-bold text-amber-700">{stats.waitlist}</div>
+              <div className="text-xs text-amber-600">候补待转</div>
+            </Card>
+            <Card className="bg-orange-50 border-orange-200 p-3 text-center">
+              <div className="text-2xl font-bold text-orange-700">{stats.suspended}</div>
+              <div className="text-xs text-orange-600">缺勤暂停</div>
+            </Card>
+            <Card className="bg-violet-50 border-violet-200 p-3 text-center">
+              <div className="text-2xl font-bold text-violet-700">{stats.reinstating}</div>
+              <div className="text-xs text-violet-600">复课待批</div>
+            </Card>
+          </div>
+
+          <StatusLegend />
+
           {myRegistrations.filter(r => r.status !== 'cancelled').length === 0 ? (
             <Empty
               icon={<ListChecks size={48} />}
@@ -432,34 +567,55 @@ const ElderPage: React.FC = () => {
                 .map((registration) => {
                   const course = getCourseById(registration.courseId)
                   if (!course) return null
+                  const detailedStatus = getDetailedRegistrationStatus(registration)
 
                   return (
-                    <Card key={registration.id}>
+                    <Card
+                      key={registration.id}
+                      className={detailedStatus === 'riskUnconfirmed' || detailedStatus === 'suspendedByAbsence'
+                        ? 'animate-pulse border-l-4 border-l-orange-400'
+                        : ''
+                      }
+                    >
                       <CardContent className="p-5">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-4">
                             <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
-                              registration.status === 'confirmed' ? 'bg-green-100' :
-                              registration.status === 'suspended' ? 'bg-red-100' :
-                              registration.status === 'waitlisted' ? 'bg-amber-100' :
-                              'bg-blue-100'
+                              course.type === 'calligraphy' ? 'bg-blue-100' :
+                              course.type === 'dance' ? 'bg-purple-100' :
+                              course.type === 'sports' ? 'bg-green-100' :
+                              course.type === 'health' ? 'bg-red-100' :
+                              'bg-teal-100'
                             }`}>
                               {course.type === 'calligraphy' && <BookOpen size={24} className="text-blue-600" />}
                               {course.type === 'dance' && <Users size={24} className="text-purple-600" />}
                               {course.type === 'sports' && <Heart size={24} className="text-green-600" />}
                               {course.type === 'health' && <Heart size={24} className="text-red-600" />}
+                              {course.type === 'rehabilitation' && <Stethoscope size={24} className="text-teal-600" />}
                             </div>
                             <div>
-                              <div className="font-medium text-gray-800">{course.name}</div>
+                              <div className="font-medium text-gray-800 flex items-center gap-2">
+                                {course.name}
+                                {course.isRehabilitation && (
+                                  <span className="text-xs px-1.5 py-0.5 rounded bg-teal-100 text-teal-700">康复</span>
+                                )}
+                              </div>
                               <div className="text-sm text-gray-500">
                                 报名时间：{registration.registrationDate}
                               </div>
-                              {registration.status === 'waitlisted' && (
-                                <div className="text-sm text-amber-600 mt-1">
+                              {detailedStatus === 'waitlistPendingPromotion' && (
+                                <div className="text-sm text-amber-600 mt-1 flex items-center gap-1">
+                                  <Clock size={12} />
                                   候补顺位：第 {registration.waitlistPosition} 位
                                 </div>
                               )}
-                              {registration.status === 'suspended' && registration.suspensionReason && (
+                              {detailedStatus === 'reinstatementPending' && (
+                                <div className="text-sm text-violet-600 mt-1 flex items-center gap-1">
+                                  <ShieldCheck size={12} />
+                                  原候补顺位 {registration.originalWaitlistPosition ?? '无'}，资源已锁定保护
+                                </div>
+                              )}
+                              {detailedStatus === 'suspendedByAbsence' && registration.suspensionReason && (
                                 <div className="text-sm text-red-600 mt-1 flex items-center gap-1">
                                   <AlertCircle size={14} />
                                   {registration.suspensionReason}
@@ -468,11 +624,11 @@ const ElderPage: React.FC = () => {
                             </div>
                           </div>
                           <div className="flex items-center gap-3">
-                            {getRegistrationStatusBadge(registration)}
-                            {registration.status === 'suspended' && (
+                            <RegistrationStatusBadge status={detailedStatus} />
+                            {detailedStatus === 'suspendedByAbsence' && (
                               <Button
                                 size="sm"
-                                onClick={() => openReinstatementModal(course.id, registration.id)}
+                                onClick={() => openReinstatementModal(registration.id)}
                               >
                                 <FileText size={14} />
                                 申请复课
@@ -496,9 +652,23 @@ const ElderPage: React.FC = () => {
               <FileText size={24} className="text-amber-500" />
               申请复课
             </h3>
-            <p className="text-gray-600 mb-4">
-              您的账号因「{currentElder.suspensionReason}」已被暂停，请填写复课申请理由，待主任审批通过后恢复上课资格。
-            </p>
+            <div className="space-y-3 mb-4">
+              <div className="p-3 rounded-xl bg-violet-50 border border-violet-200 text-sm text-violet-800">
+                <div className="font-medium flex items-center gap-1.5 mb-1">
+                  <ShieldCheck size={14} />
+                  复课审批保护机制
+                </div>
+                <ul className="text-xs space-y-0.5 pl-5 list-disc">
+                  <li>审批期间原候补顺位保持不变，不会被他人顶替</li>
+                  <li>已占用的器材和场地时间段将被锁定保留</li>
+                  <li>主任审批通过后自动恢复正常在读状态</li>
+                  <li>审批拒绝则自动释放锁定的资源</li>
+                </ul>
+              </div>
+              <p className="text-gray-600 text-sm">
+                请填写复课申请理由，提交后等待主任审批。
+              </p>
+            </div>
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -519,7 +689,7 @@ const ElderPage: React.FC = () => {
                   onClick={() => {
                     setShowReinstatementModal(false)
                     setReinstatementReason('')
-                    setReinstatementCourse(null)
+                    setReinstatementRegistrationId(null)
                   }}
                 >
                   取消
