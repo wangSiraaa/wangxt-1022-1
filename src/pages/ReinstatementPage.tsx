@@ -20,7 +20,7 @@ import { useAppStore } from '../store'
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '../components/Card'
 import { Button } from '../components/Button'
 import { StatusBadge } from '../components/StatusBadge'
-import Empty from '../components/Empty'
+import { Empty } from '../components/Empty'
 import type { ReinstatementApproval, Elder, Course, Registration, Attendance } from '../types'
 
 type TabType = 'pending' | 'approved' | 'rejected'
@@ -520,7 +520,7 @@ export default function ReinstatementPage() {
       <div className="space-y-4">
         {filteredApprovals.length === 0 ? (
           <Empty
-            icon={ClipboardCheck}
+            icon={<ClipboardCheck size={48} className="text-amber-400" />}
             title={`暂无${statusTabLabels[activeTab]}的申请`}
             description={activeTab === 'pending' ? '所有申请都已处理完毕' : '暂无历史记录'}
           />
